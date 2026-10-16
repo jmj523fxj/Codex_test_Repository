@@ -5,6 +5,15 @@ from questions import QUESTIONS
 
 POINTS_PER_QUESTION = 20
 
+def filter_questions(questions, topic):
+    selected_questions = []
+
+    for question in questions:
+        if question["topic"] == topic:
+            selected_questions.append(question)
+
+    return selected_questions
+
 
 def ask_question(question, number, total):
     """显示一道题，返回有效答案；退出时返回 None。"""
