@@ -3,7 +3,7 @@
 from questions import QUESTIONS
 
 
-POINTS_PER_QUESTION = 10
+POINTS_PER_QUESTION = 20
 
 
 def ask_question(question, number, total):
