@@ -55,6 +55,8 @@ def show_summary(results, total):
         print(f"已答题正确率：{accuracy:.0f}%")
         if accuracy >= 80:
             print("本轮表现不错，继续挑战！")
+        else:
+            print("回顾一下错题，下次继续进步！")
     else:
         print("本轮尚未作答，可以重新运行游戏开始挑战。")
 
