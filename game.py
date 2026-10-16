@@ -53,6 +53,8 @@ def show_summary(results, total):
     if answered_count > 0:
         accuracy = correct_count / answered_count * 100
         print(f"已答题正确率：{accuracy:.0f}%")
+        if accuracy >= 80:
+            print("本轮表现不错，继续挑战！")
     else:
         print("本轮尚未作答，可以重新运行游戏开始挑战。")
 
