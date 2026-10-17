@@ -14,6 +14,30 @@ def filter_questions(questions, topic):
 
     return selected_questions
 
+def choose_questions():
+    print("请选择题目分类：")
+    print("1. 全部题目")
+    print("2. 生理学")
+    print("3. 医学统计")
+
+    while True:
+        try:
+            choice = input("输入 1、2、3，或 Q 退出：").strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出。")
+            return []
+
+        if choice == "1":
+            return QUESTIONS
+        elif choice == "2":
+            return filter_questions(QUESTIONS, "生理学")
+        elif choice == "3":
+            return filter_questions(QUESTIONS, "医学统计")
+        elif choice == "Q":
+            return []
+        else:
+            print("输入无效，请重新选择。")
+
 
 def ask_question(question, number, total):
     """显示一道题，返回有效答案；退出时返回 None。"""
@@ -85,16 +109,20 @@ def show_summary(results, total):
             print(f"   正确答案：{expected}. {question['options'][expected]}")
             print(f"   解析：{question['explanation']}")
 
-
 def main():
     print("========== 医学知识闯关 ==========")
-    print(f"共 {len(QUESTIONS)} 题，每题 {POINTS_PER_QUESTION} 分。")
+
+    selected_questions = choose_questions()
+    if not selected_questions:
+        return
+
+    print(f"共 {len(selected_questions)} 题，每题 {POINTS_PER_QUESTION} 分。")
     print("输入字母或数字选择答案，输入 Q 可提前结束。")
     print("答题记录仅用于本轮，关闭程序后不会保存。")
 
     results = []
-    for number, question in enumerate(QUESTIONS, start=1):
-        answer = ask_question(question, number, len(QUESTIONS))
+    for number, question in enumerate(selected_questions, start=1):
+        answer = ask_question(question, number, len(selected_questions))
         if answer is None:
             break
 
@@ -106,7 +134,7 @@ def main():
             print(f"这题答错了。正确答案：{expected}. {question['options'][expected]}")
         print(f"解析：{question['explanation']}")
 
-    show_summary(results, len(QUESTIONS))
+    show_summary(results, len(selected_questions))
 
 
 if __name__ == "__main__":
