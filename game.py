@@ -1,5 +1,7 @@
 """医学知识闯关游戏：在终端运行 python3 game.py。"""
 
+import random
+
 from questions import QUESTIONS
 
 
@@ -115,6 +117,12 @@ def main():
     selected_questions = choose_questions()
     if not selected_questions:
         return
+
+    # 随机排列全部选中题目，生成新列表，保留原题库的顺序。
+    selected_questions = random.sample(
+        selected_questions,
+        k=len(selected_questions),
+    )
 
     print(f"共 {len(selected_questions)} 题，每题 {POINTS_PER_QUESTION} 分。")
     print("输入字母或数字选择答案，输入 Q 可提前结束。")
