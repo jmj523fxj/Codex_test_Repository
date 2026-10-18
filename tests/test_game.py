@@ -2,9 +2,13 @@
 
 import contextlib
 import io
+import json
 import random
+import tempfile
 import unittest
 from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import game
@@ -12,6 +16,15 @@ from questions import QUESTIONS
 
 
 class GameTests(unittest.TestCase):
+    def setUp(self):
+        # 每项测试使用独立目录，不读写玩家的真实成绩。
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        self.history_path = Path(temporary_directory.name) / "data" / "history.json"
+        history_patch = patch("game.HISTORY_PATH", self.history_path)
+        history_patch.start()
+        self.addCleanup(history_patch.stop)
+
     def question_order(self, questions, count=None):
         """固定测试用的随机种子，预测题序，避免测试偶然失败。"""
         if count is None:
@@ -253,6 +266,113 @@ class GameTests(unittest.TestCase):
         self.assertIn(ordered[1]["prompt"], review)
         self.assertNotIn(ordered[0]["prompt"], review)
         self.assertNotIn(ordered[2]["prompt"], review)
+
+    def test_completed_round_saves_score_and_timestamp(self):
+        selected = [question for question in QUESTIONS if question["topic"] == "生理学"]
+        ordered = self.question_order(selected, 3)
+        output = self.play(
+            [question["answer"] for question in ordered],
+            menu_inputs=["2"],
+            count_inputs=["3"],
+        )
+        history = json.loads(self.history_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(history), 1)
+        record = history[0]
+        self.assertEqual(record["total"], 3)
+        self.assertEqual(record["answered_count"], 3)
+        self.assertEqual(record["correct_count"], 3)
+        self.assertEqual(record["score"], 3 * game.POINTS_PER_QUESTION)
+        self.assertEqual(record["maximum"], 3 * game.POINTS_PER_QUESTION)
+        self.assertEqual(record["accuracy"], 100)
+        self.assertIsNotNone(datetime.fromisoformat(record["saved_at"]).tzinfo)
+        self.assertIn("本轮成绩已保存", output)
+
+    def test_repeated_rounds_append_and_preserve_previous_records(self):
+        first_question = self.question_order(QUESTIONS, 1)[0]
+        self.play([first_question["answer"]], count_inputs=["1"])
+        first_history = json.loads(self.history_path.read_text(encoding="utf-8"))
+
+        selected = [question for question in QUESTIONS if question["topic"] == "医学统计"]
+        ordered = self.question_order(selected, 2)
+        self.play([ordered[0]["answer"], "Q"], menu_inputs=["3"], count_inputs=["2"])
+        history = json.loads(self.history_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0], first_history[0])
+        self.assertEqual(history[1]["total"], 2)
+        self.assertEqual(history[1]["answered_count"], 1)
+        self.assertEqual(history[1]["correct_count"], 1)
+        self.assertEqual(history[1]["score"], game.POINTS_PER_QUESTION)
+        self.assertEqual(history[1]["maximum"], 2 * game.POINTS_PER_QUESTION)
+        self.assertEqual(history[1]["accuracy"], 100)
+
+    def test_partial_round_saves_only_submitted_answers(self):
+        selected = [question for question in QUESTIONS if question["topic"] == "生理学"]
+        ordered = self.question_order(selected, 3)
+        wrong = next(option for option in ordered[1]["options"] if option != ordered[1]["answer"])
+        self.play(
+            [ordered[0]["answer"], wrong, "Q"],
+            menu_inputs=["2"],
+            count_inputs=["3"],
+        )
+        record = json.loads(self.history_path.read_text(encoding="utf-8"))[0]
+        self.assertEqual(record["total"], 3)
+        self.assertEqual(record["answered_count"], 2)
+        self.assertEqual(record["correct_count"], 1)
+        self.assertEqual(record["score"], game.POINTS_PER_QUESTION)
+        self.assertEqual(record["maximum"], 3 * game.POINTS_PER_QUESTION)
+        self.assertEqual(record["accuracy"], 50)
+
+    def test_no_answers_do_not_create_history(self):
+        cases = [
+            {"answers": [], "menu_inputs": ["Q"]},
+            {"answers": [], "count_inputs": ["Q"]},
+            {"answers": ["Q"]},
+        ]
+        for inputs in cases:
+            with self.subTest(inputs=inputs):
+                output = self.play(**inputs)
+                self.assertFalse(self.history_path.parent.exists())
+                self.assertNotIn("本轮成绩已保存", output)
+
+    def test_no_answers_leave_existing_history_unchanged(self):
+        original = b'[{"previous": true}]\n'
+        self.history_path.parent.mkdir(parents=True)
+        self.history_path.write_bytes(original)
+        self.play(["Q"])
+        self.assertEqual(self.history_path.read_bytes(), original)
+
+    def test_malformed_history_is_preserved_without_interrupting_game(self):
+        self.history_path.parent.mkdir(parents=True)
+        first_question = self.question_order(QUESTIONS, 1)[0]
+        for original in (b'{"broken":', b'{}', b'\xff'):
+            with self.subTest(original=original):
+                self.history_path.write_bytes(original)
+                output = self.play([first_question["answer"]], count_inputs=["1"])
+                self.assertIn("得分：20/20 分", output)
+                self.assertIn("原文件保持不变", output)
+                self.assertNotIn("本轮成绩已保存", output)
+                self.assertEqual(self.history_path.read_bytes(), original)
+
+    def test_failed_replace_preserves_existing_history_and_cleans_temporary_files(self):
+        original = b'[{"previous": true}]\n'
+        self.history_path.parent.mkdir(parents=True)
+        self.history_path.write_bytes(original)
+        first_question = self.question_order(QUESTIONS, 1)[0]
+        with patch("game.Path.replace", side_effect=OSError("模拟写入失败")):
+            output = self.play([first_question["answer"]], count_inputs=["1"])
+        self.assertIn("得分：20/20 分", output)
+        self.assertIn("成绩保存失败", output)
+        self.assertNotIn("本轮成绩已保存", output)
+        self.assertEqual(self.history_path.read_bytes(), original)
+        self.assertEqual(list(self.history_path.parent.iterdir()), [self.history_path])
+
+    def test_unwritable_directory_does_not_interrupt_game(self):
+        first_question = self.question_order(QUESTIONS, 1)[0]
+        with patch("game.Path.mkdir", side_effect=PermissionError("模拟目录不可写")):
+            output = self.play([first_question["answer"]], count_inputs=["1"])
+        self.assertIn("得分：20/20 分", output)
+        self.assertIn("成绩保存失败", output)
+        self.assertFalse(self.history_path.exists())
 
     def test_question_bank_has_valid_content(self):
         self.assertGreaterEqual(len(QUESTIONS), 5)

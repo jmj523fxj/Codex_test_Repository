@@ -1,11 +1,16 @@
 """医学知识闯关游戏：在终端运行 python3 game.py。"""
 
+import json
 import random
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
 
 from questions import QUESTIONS
 
 
 POINTS_PER_QUESTION = 20
+HISTORY_PATH = Path(__file__).resolve().parent / "data" / "history.json"
 
 def filter_questions(questions, topic):
     selected_questions = []
@@ -99,7 +104,7 @@ def ask_question(question, number, total):
 
 
 def show_summary(results, total):
-    """根据已经提交的答案统计成绩，并列出本轮错题。"""
+    """显示成绩和本轮错题，并返回用于保存的成绩字典。"""
     correct_count = 0
     mistakes = []
     for result in results:
@@ -111,13 +116,13 @@ def show_summary(results, total):
 
     answered_count = len(results)
     score = correct_count * POINTS_PER_QUESTION
+    accuracy = correct_count / answered_count * 100 if answered_count > 0 else None
     print("\n========== 本轮成绩 ==========")
     print(f"已完成：{answered_count}/{total} 题")
     print(f"答对：{correct_count}/{answered_count} 题")
     print(f"得分：{score}/{total * POINTS_PER_QUESTION} 分")
 
     if answered_count > 0:
-        accuracy = correct_count / answered_count * 100
         print(f"已答题正确率：{accuracy:.0f}%")
         if accuracy >= 80:
             print("本轮表现不错，继续挑战！")
@@ -142,6 +147,54 @@ def show_summary(results, total):
             print(f"   正确答案：{expected}. {question['options'][expected]}")
             print(f"   解析：{question['explanation']}")
 
+    return {
+        "total": total,
+        "answered_count": answered_count,
+        "correct_count": correct_count,
+        "score": score,
+        "maximum": total * POINTS_PER_QUESTION,
+        "accuracy": accuracy,
+    }
+
+
+def save_result(summary):
+    """追加保存一轮成绩和带时区的 UTC 时间，返回是否保存成功。"""
+    if summary["answered_count"] == 0:
+        return False
+
+    try:
+        if HISTORY_PATH.exists():
+            history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        else:
+            history = []
+
+        if not isinstance(history, list):
+            raise ValueError("历史成绩必须是一个列表")
+
+        record = summary.copy()
+        record["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        history.append(record)
+
+        HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # 先写入同一目录下的临时文件，写完再替换，保护已有成绩。
+        with tempfile.TemporaryDirectory(prefix=".history-", dir=HISTORY_PATH.parent) as temporary_directory:
+            temporary_path = Path(temporary_directory) / "history.json"
+            temporary_path.write_text(
+                json.dumps(history, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary_path.replace(HISTORY_PATH)
+    except (ValueError, UnicodeError):
+        print("历史成绩文件格式有误，本轮成绩未保存，原文件保持不变。")
+        return False
+    except OSError as error:
+        print(f"成绩保存失败：{error}。本轮成绩仍可在上方查看。")
+        return False
+
+    print("本轮成绩已保存到 data/history.json。")
+    return True
+
+
 def main():
     print("========== 医学知识闯关 ==========")
 
@@ -162,7 +215,7 @@ def main():
     maximum = len(selected_questions) * POINTS_PER_QUESTION
     print(f"本轮共 {len(selected_questions)} 题，每题 {POINTS_PER_QUESTION} 分，满分 {maximum} 分。")
     print("输入字母或数字选择答案，输入 Q 可提前结束。")
-    print("答题记录仅用于本轮，关闭程序后不会保存。")
+    print("本轮成绩会保存到当前环境的 data/history.json；错题回顾仅限本轮。")
 
     results = []
     for number, question in enumerate(selected_questions, start=1):
@@ -178,7 +231,8 @@ def main():
             print(f"这题答错了。正确答案：{expected}. {question['options'][expected]}")
         print(f"解析：{question['explanation']}")
 
-    show_summary(results, len(selected_questions))
+    summary = show_summary(results, len(selected_questions))
+    save_result(summary)
 
 
 if __name__ == "__main__":
