@@ -41,6 +41,37 @@ def choose_questions():
             print("输入无效，请重新选择。")
 
 
+def choose_question_count(total):
+    """获取本轮题数；回车选择全部，退出时返回 None。"""
+    print(f"该分类共有 {total} 道题。")
+
+    while True:
+        try:
+            choice = input(
+                f"本轮答几题？输入 1～{total}，回车选择全部，Q 退出："
+            ).strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出。")
+            return None
+
+        if choice == "Q":
+            print("已退出。")
+            return None
+        if choice == "":
+            return total
+
+        try:
+            count = int(choice)
+        except ValueError:
+            print("请输入整数，或直接回车选择全部；输入 Q 可退出。")
+            continue
+
+        if 1 <= count <= total:
+            return count
+
+        print(f"题数必须在 1～{total} 之间，请重新输入。")
+
+
 def ask_question(question, number, total):
     """显示一道题，返回有效答案；退出时返回 None。"""
     print(f"\n第 {number}/{total} 题 · {question['topic']}")
@@ -118,13 +149,18 @@ def main():
     if not selected_questions:
         return
 
-    # 随机排列全部选中题目，生成新列表，保留原题库的顺序。
+    count = choose_question_count(len(selected_questions))
+    if count is None:
+        return
+
+    # 随机抽取指定数量的题目，生成新列表，保留原题库的顺序。
     selected_questions = random.sample(
         selected_questions,
-        k=len(selected_questions),
+        k=count,
     )
 
-    print(f"共 {len(selected_questions)} 题，每题 {POINTS_PER_QUESTION} 分。")
+    maximum = len(selected_questions) * POINTS_PER_QUESTION
+    print(f"本轮共 {len(selected_questions)} 题，每题 {POINTS_PER_QUESTION} 分，满分 {maximum} 分。")
     print("输入字母或数字选择答案，输入 Q 可提前结束。")
     print("答题记录仅用于本轮，关闭程序后不会保存。")
 

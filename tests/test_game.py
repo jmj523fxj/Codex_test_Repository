@@ -12,15 +12,20 @@ from questions import QUESTIONS
 
 
 class GameTests(unittest.TestCase):
-    def question_order(self, questions):
+    def question_order(self, questions, count=None):
         """固定测试用的随机种子，预测题序，避免测试偶然失败。"""
-        return random.Random(42).sample(questions, k=len(questions))
+        if count is None:
+            count = len(questions)
+        return random.Random(42).sample(questions, k=count)
 
-    def play(self, answers, menu_inputs=None):
+    def play(self, answers, menu_inputs=None, count_inputs=None):
         if menu_inputs is None:
             menu_inputs = ["1"]
+        if count_inputs is None:
+            count_inputs = [""]
         output = io.StringIO()
-        with patch("builtins.input", side_effect=list(menu_inputs) + list(answers)):
+        inputs = list(menu_inputs) + list(count_inputs) + list(answers)
+        with patch("builtins.input", side_effect=inputs):
             # 仍使用真实的随机抽样算法，只在测试中固定种子。
             with patch("game.random", random.Random(42)):
                 with contextlib.redirect_stdout(output):
@@ -164,6 +169,90 @@ class GameTests(unittest.TestCase):
                 for question in selected:
                     self.assertEqual(output.count(question["prompt"]), 1)
                 self.assertEqual(QUESTIONS, original_bank)
+
+    def test_custom_counts_use_only_sampled_questions_and_correct_maximum(self):
+        original_bank = deepcopy(QUESTIONS)
+        physiology_count = sum(question["topic"] == "生理学" for question in QUESTIONS)
+        statistics_count = sum(question["topic"] == "医学统计" for question in QUESTIONS)
+        cases = [
+            ("1", None, 1, "1"),
+            ("1", None, len(QUESTIONS), str(len(QUESTIONS))),
+            ("2", "生理学", 3, "3"),
+            ("2", "生理学", physiology_count, str(physiology_count)),
+            ("2", "生理学", physiology_count, "   "),
+            ("3", "医学统计", 2, "2"),
+            ("3", "医学统计", statistics_count, str(statistics_count)),
+        ]
+        for choice, topic, count, count_input in cases:
+            with self.subTest(choice=choice, count=count, count_input=count_input):
+                selected = [
+                    question for question in QUESTIONS
+                    if topic is None or question["topic"] == topic
+                ]
+                ordered = self.question_order(selected, count)
+                output = self.play(
+                    [question["answer"] for question in ordered],
+                    menu_inputs=[choice],
+                    count_inputs=[count_input],
+                )
+                maximum = count * game.POINTS_PER_QUESTION
+                self.assertIn(f"本轮共 {count} 题", output)
+                self.assertIn(f"满分 {maximum} 分", output)
+                self.assertIn(f"已完成：{count}/{count} 题", output)
+                self.assertIn(f"答对：{count}/{count} 题", output)
+                self.assertIn(f"得分：{maximum}/{maximum} 分", output)
+                self.assertIn(f"第 {count}/{count} 题", output)
+                positions = [output.index(question["prompt"]) for question in ordered]
+                self.assertEqual(positions, sorted(positions))
+                for question in QUESTIONS:
+                    expected_occurrences = 1 if question in ordered else 0
+                    self.assertEqual(output.count(question["prompt"]), expected_occurrences)
+                self.assertEqual(QUESTIONS, original_bank)
+
+    def test_count_retries_invalid_numbers_and_text(self):
+        selected = [question for question in QUESTIONS if question["topic"] == "生理学"]
+        ordered = self.question_order(selected, 3)
+        output = self.play(
+            [question["answer"] for question in ordered],
+            menu_inputs=["2"],
+            count_inputs=["0", "-1", str(len(selected) + 1), "不确定", "2.5", " 3 "],
+        )
+        self.assertEqual(output.count(f"题数必须在 1～{len(selected)} 之间"), 3)
+        self.assertEqual(output.count("请输入整数"), 2)
+        self.assertIn("已完成：3/3 题", output)
+        self.assertIn("得分：60/60 分", output)
+
+    def test_quit_at_count_selection_does_not_start_a_round(self):
+        output = self.play([], count_inputs=[" q "])
+        self.assertIn("已退出。", output)
+        self.assertNotIn("第 1/", output)
+        self.assertNotIn("本轮成绩", output)
+
+    def test_closed_count_input_and_keyboard_interrupt_finish_cleanly(self):
+        for interruption in (EOFError(), KeyboardInterrupt()):
+            with self.subTest(interruption=type(interruption).__name__):
+                output = self.play([], count_inputs=[interruption])
+                self.assertIn("已退出。", output)
+                self.assertNotIn("本轮成绩", output)
+
+    def test_partial_custom_round_scores_and_reviews_only_answered_questions(self):
+        selected = [question for question in QUESTIONS if question["topic"] == "生理学"]
+        ordered = self.question_order(selected, 3)
+        wrong = next(option for option in ordered[1]["options"] if option != ordered[1]["answer"])
+        output = self.play(
+            [ordered[0]["answer"], wrong, "Q"],
+            menu_inputs=["2"],
+            count_inputs=["3"],
+        )
+        self.assertIn("已完成：2/3 题", output)
+        self.assertIn("答对：1/2 题", output)
+        self.assertIn("已答题正确率：50%", output)
+        self.assertIn(f"得分：{game.POINTS_PER_QUESTION}/{3 * game.POINTS_PER_QUESTION} 分", output)
+        self.assertNotIn("恭喜完成本轮挑战", output)
+        review = output.split("本轮错题回顾：", 1)[1]
+        self.assertIn(ordered[1]["prompt"], review)
+        self.assertNotIn(ordered[0]["prompt"], review)
+        self.assertNotIn(ordered[2]["prompt"], review)
 
     def test_question_bank_has_valid_content(self):
         self.assertGreaterEqual(len(QUESTIONS), 5)
